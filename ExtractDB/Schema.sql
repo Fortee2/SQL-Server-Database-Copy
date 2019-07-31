@@ -22,12 +22,19 @@ DECLARE
 	@Seed int,
 	@Increment int, 
 	@FirstColumn char(1) = ' ',
+	--Variables for constraint
+	@ConstraintName varchar(128),
+	@ConstraintHold varchar(128),
+	@ConstraintType varchar(2),
+	--Variables for Indexes
+	@IndexName  varchar(128),
 	--Variables for Data Migration
 	@InsertCols varchar(max),
 	@InsertSql nvarchar(max)
 
 Declare @Scripts Table(
 	Id int identity(1,1) primary key,
+	ScriptType varchar(50),
 	TableName varchar(128),
 	SqlStatement varchar(max),
 	SchemaName varchar(128)
@@ -53,7 +60,7 @@ where type_desc = 'SQL_LOGIN'
 
 INSERT INTO @Scripts 
 (
-	TableName, 
+	ScriptType,
 	SqlStatement, 
 	SchemaName
 )
@@ -71,7 +78,8 @@ order by create_date asc
 
 While EXISTS (SELECT [Name] FROM #Tables)
 BEGIN
-	SELECT @TableObjectId = [object_id], 
+	SELECT TOP 1 
+		@TableObjectId = [object_id], 
 		@TableName = [Name],
 		@SchemaName = [SchemaName]
 		FROM #tables;
@@ -174,21 +182,29 @@ BEGIN
 	SET @SQL = 'CREATE TABLE ' + @SchemaName + '.' + @TableName + ' (' + @SQL + ')';
 
 	IF @DropAndRecreate = 1
-		INSERT INTO @Scripts	(TableName, SqlStatement)
+		INSERT INTO @Scripts	
+		(
+			ScriptType,
+			TableName, 
+			SqlStatement
+		)
 		VALUES(
 
 			'Alter',
+			@TableName,
 			'DROP TABLE ' + @SchemaName + '.' + @TableName
 		)	
 
 	INSERT INTO @Scripts	
-		(
-			TableName, 
-			SqlStatement, 
-			SchemaName
-		)
+	(
+		ScriptType,
+		TableName, 
+		SqlStatement, 
+		SchemaName
+	)
 	VALUES
 	(
+		'Table',
 		@TableName,
 		@SQL,
 		@SchemaName
