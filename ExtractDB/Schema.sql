@@ -19,6 +19,8 @@ DECLARE
 	@ColPrecision int,
 	@ColScale int,
 	@ColTextLength varchar(5),
+	@ColIsComputed bit,
+	@ColComputedDefintion varchar(max),
 	@Seed int,
 	@Increment int, 
 	@FirstColumn char(1) = ' ',
@@ -28,6 +30,9 @@ DECLARE
 	@ConstraintType varchar(2),
 	--Variables for Indexes
 	@IndexName  varchar(128),
+	@IndexType  varchar(128),
+	@IndexedColumns varchar(max),
+	@IndexIncludedColumns varchar(max),
 	--Variables for Data Migration
 	@InsertCols varchar(max),
 	@InsertSql nvarchar(max)
@@ -38,6 +43,14 @@ Declare @Scripts Table(
 	TableName varchar(128),
 	SqlStatement varchar(max),
 	SchemaName varchar(128)
+)
+
+DECLARE @Indices Table
+(
+	IndexName varchar(128),
+	[IndexType] varchar(50),
+	IndexedColumns varchar(Max),
+	IncludedColumns varchar(max)
 )
 
 --Base line everything by dropping any temp tables that are still around
@@ -78,18 +91,19 @@ order by create_date asc
 
 While EXISTS (SELECT [Name] FROM #Tables)
 BEGIN
-	SELECT TOP 1 
+	SELECT TOP 1
 		@TableObjectId = [object_id], 
 		@TableName = [Name],
 		@SchemaName = [SchemaName]
 		FROM #tables;
-
+	
 	SET @SQL = '';
 	SET @InsertCols = '';
 
 	IF OBJECT_ID('tempdb..#ColumnData') IS NOT NULL		
 	DROP TABLE #ColumnData;
 
+	--Get a list of all the columns
 	select 
 		col.[Name] As ColName, 
 		types.[name] as TypeName, 
@@ -107,8 +121,8 @@ BEGIN
 	inner join sys.types types on col.user_type_id = types.user_type_id
 	WHERE [object_id] = @TableObjectId
 	order by Column_id
-
-	SET @FirstColumn = ' ';
+	
+	SET @FirstColumn = ' '; --This is used for toggling when to a comma in a series of fields
 
 	While EXISTS (SELECT TOP 1 [ColName] FROM #ColumnData)
 	BEGIN
@@ -126,53 +140,60 @@ BEGIN
 			,@colMaxLength = max_length
 			,@colprecision = precision
 			,@colScale = scale
+			,@ColIsComputed  = is_computed
 		FROM #ColumnData
 		Order by column_id
 		
-		--For text fields length is the number of bytes.  for nvarchar and nchar it takes two bytes to store a character that is why we divide by 2
-		SELECT @ColTextLength = CASE @ColMaxLength
-			 WHEN -1 THEN 'max' 
-			 ELSE 
-				CASE WHEN @dataType = 'nvarchar' OR @dataType = 'nchar' THEN
-					CONVERT(varchar(4),@ColMaxLength /2)
-				ELSE 
-					CONVERT(varchar(4),@ColMaxLength) 
-				END
-			 END
-
-		SET @SQL = @SQL + @FirstColumn + ' ' + @ColumnName + ' ' + 
-			CASE @dataType  
-				WHEN 'varchar' THEN 'varchar(' + @ColTextLength  + ')'
-				WHEN 'char' THEN 'char(' + @ColTextLength + ')'
-				WHEN 'nvarchar' THEN 'nvarchar(' + @ColTextLength + ')'
-				WHEN 'nchar' THEN 'nchar(' + @ColTextLength + ')'
-				WHEN 'decimal' then 'decimal(' + CONVERT(varchar(3), @colPrecision) + ',' +  CONVERT(varchar(3), @colScale) + ')'
-				WHEN 'numeric' then 'numeric(' + CONVERT(varchar(3), @colPrecision) + ',' +  CONVERT(varchar(3), @colScale) + ')'
-				ELSE @dataType
-			END
-
-		if @ColIdentity = 1
+		SET @SQL = @SQL + @FirstColumn + ' ' + @ColumnName + ' '
+			
+		if @ColIsComputed = 0 
 		BEGIN
-			SELECT @Seed = Convert(int, seed_value),  @Increment = convert(int, increment_value)
-			FROM sys.identity_columns
-			WHERE [object_id] = @TableObjectId AND [name] = @ColumnName
+			--For text fields length is the number of bytes.  for nvarchar and nchar it takes two bytes to store a character that is why we divide by 2
+			SELECT @ColTextLength = CASE @ColMaxLength
+				 WHEN -1 THEN 'max' 
+				 ELSE 
+					CASE WHEN @dataType = 'nvarchar' OR @dataType = 'nchar' THEN
+						CONVERT(varchar(4),@ColMaxLength /2)
+					ELSE 
+						CONVERT(varchar(4),@ColMaxLength) 
+					END
+				 END
 
-			SET @SQL = @SQL + ' IDENTITY(' + CONVERT(varchar(3), @Seed) + ',' +  CONVERT(varchar(3),@Increment) + ') '
+				SET @SQL = @SQL +
+				CASE @dataType  
+					WHEN 'varchar' THEN 'varchar(' + @ColTextLength  + ')'
+					WHEN 'char' THEN 'char(' + @ColTextLength + ')'
+					WHEN 'nvarchar' THEN 'nvarchar(' + @ColTextLength + ')'
+					WHEN 'nchar' THEN 'nchar(' + @ColTextLength + ')'
+					WHEN 'decimal' then 'decimal(' + CONVERT(varchar(3), @colPrecision) + ',' +  CONVERT(varchar(3), @colScale) + ')'
+					WHEN 'numeric' then 'numeric(' + CONVERT(varchar(3), @colPrecision) + ',' +  CONVERT(varchar(3), @colScale) + ')'
+					ELSE @dataType
+				END
+
+			if @ColIdentity = 1
+			BEGIN
+				SELECT @Seed = Convert(int, seed_value),  @Increment = convert(int, increment_value)
+				FROM sys.identity_columns
+				WHERE [object_id] = @TableObjectId AND [name] = @ColumnName
+
+				SET @SQL = @SQL + ' IDENTITY(' + CONVERT(varchar(3), @Seed) + ',' +  CONVERT(varchar(3),@Increment) + ') '
+			END
+	
+			if NOT @ColDefault IS NULL
+				SET @SQL = @SQL + ' DEFAULT' + @ColDefault
+
+			if @ColNullable = 0
+				SET @SQL = @SQL + ' NOT NULL '
 		END
+		ELSE
+		BEGIN 
+			SELECT @ColComputedDefintion = [definition] 
+			from sys.computed_columns 
+			where [OBJECT_ID] = @TableObjectId 
+				and [column_id] = @ColId
 
-		SELECT @ColDefault = d.definition   
-		FROM sys.default_constraints AS d  
-		WHERE d.parent_object_id = @ColObject
-		AND d.parent_column_id = @ColId 
-
-		if NOT @ColDefault IS NULL
-			SET @SQL = @SQL + ' DEFAULT' + @ColDefault
-
-		if @ColNullable = 0
-			SET @SQL = @SQL + ' NOT NULL '
-
-		-- This code is for generating an insert statement		
-		SET @InsertCols = @InsertCols + @FirstColumn + ' ' + @ColumnName + ' ';
+			SET @SQL = @SQL + ' AS ' + @ColComputedDefintion
+		END
 
 		SET @FirstColumn = ',';
 		
@@ -210,7 +231,157 @@ BEGIN
 		@SchemaName
 	)
 
+	INSERT INTO @Scripts	
+	(
+		ScriptType,
+		TableName, 
+		SqlStatement, 
+		SchemaName
+	)
+	select 'Trigger',
+		@TableName, 
+		m.definition, 
+		@SchemaName
+	 from sys.sql_modules m
+	inner join sys.objects o on m.object_id  = o.object_id
+	WHERE o.parent_object_id = @TableObjectId
+		and o.[Type] = 'TR'
+
+
+	--Add in the indexes
+	INSERT INTO @Indices 
+	(
+		IndexName,
+		[IndexType],
+		IndexedColumns,
+		IncludedColumns
+	)
+	SELECT 
+		 i.NAME AS 'IndexName'
+		,LOWER(i.type_desc) + CASE 
+			WHEN i.is_unique = 1
+				THEN ', unique'
+			ELSE ''
+			END + CASE 
+			WHEN i.is_primary_key = 1
+				THEN ', primary key'
+			ELSE ''
+			END AS [IndexType]
+		,STUFF((
+				SELECT ', [' + sc.NAME + ']' AS "text()"
+				FROM syscolumns AS sc
+				INNER JOIN sys.index_columns AS ic ON ic.object_id = sc.id
+					AND ic.column_id = sc.colid
+				WHERE sc.id = so.object_id
+					AND ic.index_id = i1.indid
+					AND ic.is_included_column = 0
+				ORDER BY key_ordinal
+				FOR XML PATH('')
+				), 1, 2, '') AS 'IndexedColumns'
+		,STUFF((
+				SELECT ', [' + sc.NAME + ']' AS "text()"
+				FROM syscolumns AS sc
+				INNER JOIN sys.index_columns AS ic ON ic.object_id = sc.id
+					AND ic.column_id = sc.colid
+				WHERE sc.id = so.object_id
+					AND ic.index_id = i1.indid
+					AND ic.is_included_column = 1
+				FOR XML PATH('')
+				), 1, 2, '') AS 'included_columns'
+	FROM sysindexes AS i1
+	INNER JOIN sys.indexes AS i ON i.object_id = i1.id
+		AND i.index_id = i1.indid
+	INNER JOIN sysobjects AS o ON o.id = i1.id
+	INNER JOIN sys.objects AS so ON so.object_id = o.id
+		AND is_ms_shipped = 0
+	INNER JOIN sys.schemas AS s ON s.schema_id = so.schema_id
+	WHERE so.type = 'U'
+		AND i.is_primary_key = 0  --don't want the primary key and unique constraints
+		AND i.is_unique = 0
+		AND i1.indid < 255
+		AND i1.STATUS & 64 = 0 --index with duplicates
+		AND i1.STATUS & 8388608 = 0 --auto created index
+		AND i1.STATUS & 16777216 = 0 --stats no recompute
+		AND i.type_desc <> 'heap'
+		AND so.NAME <> 'sysdiagrams'
+		AND o.id = @TableObjectId
+
+	WHILE Exists( SELECT top 1 IndexName FROM @Indices)
+	BEGIN
+		SELECT TOP 1 
+			@IndexName = IndexName,
+			@IndexedColumns = IndexedColumns,
+			@IndexType = IndexType,
+			@IndexIncludedColumns = IncludedColumns
+		FROM  @Indices
+
+		SET @SQL =  'CREATE ' + @IndexType + ' INDEX ' + @IndexName + ' ON ' + @SchemaName + '.' + @TableName + ' ( ' + @IndexedColumns + ') '
+
+		if not @IndexIncludedColumns  is null
+		BEGIN 
+			SET @SQL =   @SQL + 'INCLUDE (' + @IndexIncludedColumns + ')'
+		END
+
+		INSERT INTO @Scripts	
+		(
+			ScriptType,
+			TableName, 
+			SqlStatement, 
+			SchemaName
+		)
+		VALUES
+		(
+			'Index',
+			@TableName,
+			@SQL,
+			@SchemaName
+		)
+		DELETE FROM @Indices WHERE IndexName = @IndexName
+	END
+	
 	DELETE FROM #tables WHERE [object_id]  = @TableObjectId
 END
+	--Functions
+	INSERT INTO @Scripts	
+	(
+		ScriptType,
+		TableName, 
+		SqlStatement, 
+		SchemaName
+	)
+	select 'Functions',
+		o.[Name], 
+		m.definition, 
+		@SchemaName
+	 from sys.sql_modules m
+	inner join sys.objects o on m.object_id  = o.object_id
+	WHERE o.[Type] in ('FN', 'IF', 'TF')
 
-	SELECT * FROM @Scripts;
+	--Grab Procedures
+	INSERT INTO @Scripts	
+	(
+		ScriptType,
+		TableName, 
+		SqlStatement
+	)
+	select 'Procedures',  
+		p.name, 
+		m.definition
+	from sys.procedures p
+	inner join sys.sql_modules m on p.object_id = m.object_id
+
+	INSERT INTO @Scripts	
+	(
+		ScriptType,
+		TableName, 
+		SqlStatement
+	)
+	select 'Views',  
+		p.name, 
+		m.definition
+	from sys.views p
+	inner join sys.sql_modules m on p.object_id = m.object_id
+
+	SELECT *, LEN(SqlStatement) AS StatementLength FROM @Scripts;
+
+
