@@ -9,6 +9,6 @@ The purpose of this project is to simplify the process of recreating a SQL Serve
 ## What’s Here?
 There are two files that make up this project.  
 
-The first is [Schema.sql](https://github.com/Fortee2/SQL-Serer-Database-Copy/tree/master/ExtractDB/Schema.sql) in the ExtractDB folder.  This script extracts the meta data from your source database using the SQL Server system table and generates the necessary create statements.  
+The first is [Schema.sql](https://github.com/Fortee2/SQL-Serer-Database-Copy/tree/master/ExtractDB/Schema.sql) in the ExtractDB folder.  This script extracts the schema information from your source database using the SQL Server system table and generates the necessary create statements.  
 
-The second file is a Powershell script, [CopyDatabase.ps1](https://github.com/Fortee2/SQL-Serer-Database-Copy/tree/master/Powershell/CopyDatabase.ps1), that executes Schema.sql against the source database and take the output and applies it to a destination database.   The also includes calls to the Bulk Copy tool, BCP, to transfer data after the table structure has been created.
+The second file is a Powershell script, [CopyDatabase.ps1](https://github.com/Fortee2/SQL-Serer-Database-Copy/tree/master/Powershell/CopyDatabase.ps1), that executes Schema.sql against the source database and take the output and applies it to a destination database.   The CopyDatabase script also includes calls to the Bulk Copy tool, BCP, to transfer data after the table structure has been created.
