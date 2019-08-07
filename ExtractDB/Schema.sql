@@ -1,6 +1,6 @@
 DECLARE 
 	--Variables for execution control
-	@DropAndRecreate bit = 1,
+	@DropAndRecreate bit = 0,
 	@SQL varchar(max),
 	--Variables for Schemas
 	@SchemaName varchar(128),
@@ -144,7 +144,7 @@ BEGIN
 		FROM #ColumnData
 		Order by column_id
 		
-		SET @SQL = @SQL + @FirstColumn + ' ' + @ColumnName + ' '
+		SET @SQL = @SQL + @FirstColumn + ' [' + @ColumnName + '] '
 			
 		if @ColIsComputed = 0 
 		BEGIN
@@ -200,7 +200,22 @@ BEGIN
 		DELETE FROM #ColumnData WHERE ColName = @ColumnName;
 	END
 
-	SET @SQL = 'CREATE TABLE ' + @SchemaName + '.' + @TableName + ' (' + @SQL + ')';
+	SET @SQL = @SQL +  
+	ISNULL((SELECT CHAR(9) + ', CONSTRAINT [' + k.name + '] PRIMARY KEY (' + 
+		(SELECT STUFF((
+			SELECT ', [' + c.name + '] ' + CASE WHEN ic.is_descending_key = 1 THEN 'DESC' ELSE 'ASC' END
+			FROM sys.index_columns ic WITH (NOWAIT)
+			JOIN sys.columns c WITH (NOWAIT) ON c.[object_id] = ic.[object_id] AND c.column_id = ic.column_id
+			WHERE ic.is_included_column = 0
+				AND ic.[object_id] = k.parent_object_id 
+				AND ic.index_id = k.unique_index_id     
+			FOR XML PATH(N''), TYPE).value('.', 'NVARCHAR(MAX)'), 1, 2, ''))
+		+ ')' + CHAR(13)
+		FROM sys.key_constraints k WITH (NOWAIT)
+		WHERE k.parent_object_id = @TableObjectId 
+		AND k.[type] = 'PK'), '') + ')'  + CHAR(13)
+
+	SET @SQL = 'CREATE TABLE ' + @SchemaName + '.' + @TableName + ' (' + @SQL ;
 
 	IF @DropAndRecreate = 1
 		INSERT INTO @Scripts	
@@ -341,6 +356,52 @@ BEGIN
 	
 	DELETE FROM #tables WHERE [object_id]  = @TableObjectId
 END
+
+	--Going to pull in the keys.  Not doing this with the table create in case this is being run with the bulk copy to ease the data in.
+	INSERT INTO @Scripts	
+	(
+		ScriptType,
+		TableName, 
+		SqlStatement, 
+		SchemaName
+	)
+	SELECT  
+		'Foreign Keys',
+		 ct.[name],	
+		'ALTER TABLE ' 
+		   + QUOTENAME(cs.name) + '.' + QUOTENAME(ct.name) 
+		   + ' ADD CONSTRAINT ' + QUOTENAME(fk.name) 
+		   + ' FOREIGN KEY (' + STUFF((SELECT ',' + QUOTENAME(c.name)
+		   -- get all the columns in the constraint table
+			FROM sys.columns AS c 
+			INNER JOIN sys.foreign_key_columns AS fkc 
+			ON fkc.parent_column_id = c.column_id
+			AND fkc.parent_object_id = c.[object_id]
+			WHERE fkc.constraint_object_id = fk.[object_id]
+			ORDER BY fkc.constraint_column_id 
+			FOR XML PATH(N''), TYPE).value(N'.[1]', N'nvarchar(max)'), 1, 1, N'')
+		  + ') REFERENCES ' + QUOTENAME(rs.name) + '.' + QUOTENAME(rt.name)
+		  + '(' + STUFF((SELECT ',' + QUOTENAME(c.name)
+		   -- get all the referenced columns
+			FROM sys.columns AS c 
+			INNER JOIN sys.foreign_key_columns AS fkc 
+			ON fkc.referenced_column_id = c.column_id
+			AND fkc.referenced_object_id = c.[object_id]
+			WHERE fkc.constraint_object_id = fk.[object_id]
+			ORDER BY fkc.constraint_column_id 
+			FOR XML PATH(N''), TYPE).value(N'.[1]', N'nvarchar(max)'), 1, 1, N'') + ');',
+			cs.[Name]
+		FROM sys.foreign_keys AS fk
+		INNER JOIN sys.tables AS rt -- referenced table
+		  ON fk.referenced_object_id = rt.[object_id]
+		INNER JOIN sys.schemas AS rs 
+		  ON rt.[schema_id] = rs.[schema_id]
+		INNER JOIN sys.tables AS ct -- constraint table
+		  ON fk.parent_object_id = ct.[object_id]
+		INNER JOIN sys.schemas AS cs 
+		  ON ct.[schema_id] = cs.[schema_id]
+		WHERE rt.is_ms_shipped = 0 AND ct.is_ms_shipped = 0;
+	
 	--Functions
 	INSERT INTO @Scripts	
 	(
@@ -370,6 +431,7 @@ END
 	from sys.procedures p
 	inner join sys.sql_modules m on p.object_id = m.object_id
 
+	--Grab the Views
 	INSERT INTO @Scripts	
 	(
 		ScriptType,
@@ -382,6 +444,5 @@ END
 	from sys.views p
 	inner join sys.sql_modules m on p.object_id = m.object_id
 
-	SELECT *, LEN(SqlStatement) AS StatementLength FROM @Scripts;
-
-
+	SELECT *, LEN(SqlStatement) AS StatementLength 
+	FROM @Scripts
