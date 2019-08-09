@@ -1,4 +1,4 @@
-# SQL-Server-Database-Copy
+# SQL Server Databas Copy
 SQL and Powershell scripts for exporting a database's structure and data 
 
 ## About
