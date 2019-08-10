@@ -19,3 +19,12 @@ The second file is a Powershell script, [CopyDatabase.ps1](https://github.com/Fo
 * Adds support User Defined Table Types.
 * Orders Functions, Procedures, and Views by create date to attempt to create parent objects before dependent objects.
 * Increased max characters in powershell script to 150,000 characters to accommodate large scripts.
+
+# Prerequisites
+If you are using the powershell script to create a database copy you will need:
+* The sqlserver Powershell module installed.   You can find out more about it [here](https://docs.microsoft.com/en-us/sql/powershell/download-sql-server-ps-module?view=sql-server-2017).
+* SQL Bulk Copy Tool (BCP) installed on the machine running the Powershell script.  You can find out more [here](https://docs.microsoft.com/en-us/sql/tools/bcp-utility?view=sql-server-2017)
+
+## Assumptions
+* The source and target databases are SQL Server 2017.   This script has not been tested againist an older version of SQL Server.
+* The scripts does not create any empty database but expect a target already exists.
