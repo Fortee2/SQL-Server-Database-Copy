@@ -1,6 +1,6 @@
 DECLARE 
 	--Variables for execution control
-	@DropAndRecreate bit = 1,
+	@DropAndRecreate bit = 0,
 	@SQL varchar(max),
 	--Variables for Schemas
 	@SchemaName varchar(128),
@@ -144,7 +144,7 @@ BEGIN
 		FROM #ColumnData
 		Order by column_id
 		
-		SET @SQL = @SQL + @FirstColumn + ' ' + @ColumnName + ' '
+		SET @SQL = @SQL + @FirstColumn + ' [' + @ColumnName + '] '
 			
 		if @ColIsComputed = 0 
 		BEGIN
@@ -200,7 +200,22 @@ BEGIN
 		DELETE FROM #ColumnData WHERE ColName = @ColumnName;
 	END
 
-	SET @SQL = 'CREATE TABLE ' + @SchemaName + '.' + @TableName + ' (' + @SQL + ')';
+	SET @SQL = @SQL +  
+	ISNULL((SELECT CHAR(9) + ', CONSTRAINT [' + k.name + '] PRIMARY KEY (' + 
+		(SELECT STUFF((
+			SELECT ', [' + c.name + '] ' + CASE WHEN ic.is_descending_key = 1 THEN 'DESC' ELSE 'ASC' END
+			FROM sys.index_columns ic WITH (NOWAIT)
+			JOIN sys.columns c WITH (NOWAIT) ON c.[object_id] = ic.[object_id] AND c.column_id = ic.column_id
+			WHERE ic.is_included_column = 0
+				AND ic.[object_id] = k.parent_object_id 
+				AND ic.index_id = k.unique_index_id     
+			FOR XML PATH(N''), TYPE).value('.', 'NVARCHAR(MAX)'), 1, 2, ''))
+		+ ')' + CHAR(13)
+		FROM sys.key_constraints k WITH (NOWAIT)
+		WHERE k.parent_object_id = @TableObjectId 
+		AND k.[type] = 'PK'), '') + ')'  + CHAR(13)
+
+	SET @SQL = 'CREATE TABLE ' + @SchemaName + '.' + @TableName + ' (' + @SQL ;
 
 	IF @DropAndRecreate = 1
 		INSERT INTO @Scripts	
@@ -246,7 +261,6 @@ BEGIN
 	inner join sys.objects o on m.object_id  = o.object_id
 	WHERE o.parent_object_id = @TableObjectId
 		and o.[Type] = 'TR'
-
 
 	--Add in the indexes
 	INSERT INTO @Indices 
@@ -304,6 +318,7 @@ BEGIN
 		AND i1.STATUS & 16777216 = 0 --stats no recompute
 		AND i.type_desc <> 'heap'
 		AND so.NAME <> 'sysdiagrams'
+		AND i.type_desc <> 'clustered'
 		AND o.id = @TableObjectId
 
 	WHILE Exists( SELECT top 1 IndexName FROM @Indices)
@@ -341,6 +356,201 @@ BEGIN
 	
 	DELETE FROM #tables WHERE [object_id]  = @TableObjectId
 END
+
+	--Going to pull in the keys.  Not doing this with the table create in case this is being run with the bulk copy to ease the data in.
+	INSERT INTO @Scripts	
+	(
+		ScriptType,
+		TableName, 
+		SqlStatement, 
+		SchemaName
+	)
+	SELECT  
+		'Foreign Keys',
+		 ct.[name],	
+		'ALTER TABLE ' 
+		   + QUOTENAME(cs.name) + '.' + QUOTENAME(ct.name) 
+		   + ' ADD CONSTRAINT ' + QUOTENAME(fk.name) 
+		   + ' FOREIGN KEY (' + STUFF((SELECT ',' + QUOTENAME(c.name)
+		   -- get all the columns in the constraint table
+			FROM sys.columns AS c 
+			INNER JOIN sys.foreign_key_columns AS fkc 
+			ON fkc.parent_column_id = c.column_id
+			AND fkc.parent_object_id = c.[object_id]
+			WHERE fkc.constraint_object_id = fk.[object_id]
+			ORDER BY fkc.constraint_column_id 
+			FOR XML PATH(N''), TYPE).value(N'.[1]', N'nvarchar(max)'), 1, 1, N'')
+		  + ') REFERENCES ' + QUOTENAME(rs.name) + '.' + QUOTENAME(rt.name)
+		  + '(' + STUFF((SELECT ',' + QUOTENAME(c.name)
+		   -- get all the referenced columns
+			FROM sys.columns AS c 
+			INNER JOIN sys.foreign_key_columns AS fkc 
+			ON fkc.referenced_column_id = c.column_id
+			AND fkc.referenced_object_id = c.[object_id]
+			WHERE fkc.constraint_object_id = fk.[object_id]
+			ORDER BY fkc.constraint_column_id 
+			FOR XML PATH(N''), TYPE).value(N'.[1]', N'nvarchar(max)'), 1, 1, N'') + ');',
+			cs.[Name]
+		FROM sys.foreign_keys AS fk
+		INNER JOIN sys.tables AS rt -- referenced table
+		  ON fk.referenced_object_id = rt.[object_id]
+		INNER JOIN sys.schemas AS rs 
+		  ON rt.[schema_id] = rs.[schema_id]
+		INNER JOIN sys.tables AS ct -- constraint table
+		  ON fk.parent_object_id = ct.[object_id]
+		INNER JOIN sys.schemas AS cs 
+		  ON ct.[schema_id] = cs.[schema_id]
+		WHERE rt.is_ms_shipped = 0 AND ct.is_ms_shipped = 0;
+
+	--Need to pull User Defined Types
+
+	--Pull User Defined Table Types
+	IF OBJECT_ID('tempdb..#TableTypes') IS NOT NULL		
+	DROP TABLE #TableTypes;
+
+	DECLARE @UdttName varchar(128),
+	@UdtObjectId int
+
+	SELECT 
+		t.[Name], 
+		Type_Table_Object_Id, 
+		isnull(sd.[name], 'dbo') as SchemaName   
+	INTO #TableTypes
+	from sys.table_types t
+	Left JOIN #SchemaData sd on t.schema_id = sd.schema_id
+
+	WHILE EXISTS ( 	SELECT TOP 1 [Name] from #TableTypes)
+	BEGIN
+
+		SELECT TOP 1 @UdttName = [Name], 
+			@UdtObjectId = Type_Table_Object_Id,
+			@SchemaName = SchemaName  
+		From #TableTypes
+		
+		SET @SQL = '';
+		SET @InsertCols = '';
+
+		IF OBJECT_ID('tempdb..#TTColumnData') IS NOT NULL		
+		DROP TABLE #TTColumnData;
+
+			--Get a list of all the columns
+			select 
+				col.[Name] As ColName, 
+				types.[name] as TypeName, 
+				col.[object_id],
+				Col.[column_id],
+				col.is_nullable, 
+				is_identity, 
+				is_computed, 
+				is_rowguidcol, 
+				col.max_length, 
+				col.[precision], 
+				col.scale
+			INTO #TTColumnData 
+			from sys.columns col
+			inner join sys.types types on col.user_type_id = types.user_type_id
+			WHERE [object_id] = @UdtObjectId
+			order by Column_id
+	
+			SET @FirstColumn = ' '; --This is used for toggling when to a comma in a series of fields
+
+			While EXISTS (SELECT TOP 1 [ColName] FROM #TTColumnData)
+			BEGIN
+				--Reset Flags
+				SELECT @ColNullable = 0,
+					@ColIdentity = 0,
+					@ColDefault = null
+
+				--SELECT * FROM #TTColumnData
+
+				SELECT TOP 1 @ColumnName = ColName
+					,@dataType = TypeName
+					,@ColNullable = is_nullable
+					,@ColIdentity = is_identity
+					,@ColId = column_id
+					,@ColObject = [object_id]
+					,@colMaxLength = max_length
+					,@colprecision = precision
+					,@colScale = scale
+					,@ColIsComputed  = is_computed
+				FROM #TTColumnData
+				Order by column_id
+		
+				SET @SQL = @SQL + @FirstColumn + ' [' + @ColumnName + '] '
+			
+				if @ColIsComputed = 0 
+				BEGIN
+					--For text fields length is the number of bytes.  for nvarchar and nchar it takes two bytes to store a character that is why we divide by 2
+					SELECT @ColTextLength = CASE @ColMaxLength
+						 WHEN -1 THEN 'max' 
+						 ELSE 
+							CASE WHEN @dataType = 'nvarchar' OR @dataType = 'nchar' THEN
+								CONVERT(varchar(4),@ColMaxLength /2)
+							ELSE 
+								CONVERT(varchar(4),@ColMaxLength) 
+							END
+						 END
+
+						SET @SQL = @SQL +
+						CASE @dataType  
+							WHEN 'varchar' THEN 'varchar(' + @ColTextLength  + ')'
+							WHEN 'char' THEN 'char(' + @ColTextLength + ')'
+							WHEN 'nvarchar' THEN 'nvarchar(' + @ColTextLength + ')'
+							WHEN 'nchar' THEN 'nchar(' + @ColTextLength + ')'
+							WHEN 'decimal' then 'decimal(' + CONVERT(varchar(3), @colPrecision) + ',' +  CONVERT(varchar(3), @colScale) + ')'
+							WHEN 'numeric' then 'numeric(' + CONVERT(varchar(3), @colPrecision) + ',' +  CONVERT(varchar(3), @colScale) + ')'
+							ELSE @dataType
+						END
+
+					if @ColIdentity = 1
+					BEGIN
+						SELECT @Seed = Convert(int, seed_value),  @Increment = convert(int, increment_value)
+						FROM sys.identity_columns
+						WHERE [object_id] = @UdtObjectId AND [name] = @ColumnName
+
+						SET @SQL = @SQL + ' IDENTITY(' + CONVERT(varchar(3), @Seed) + ',' +  CONVERT(varchar(3),@Increment) + ') '
+					END
+	
+					if NOT @ColDefault IS NULL
+						SET @SQL = @SQL + ' DEFAULT' + @ColDefault
+
+					if @ColNullable = 0
+						SET @SQL = @SQL + ' NOT NULL '
+				END
+				ELSE
+					BEGIN 
+						SELECT @ColComputedDefintion = [definition] 
+						from sys.computed_columns 
+						where [OBJECT_ID] = @UdtObjectId 
+							and [column_id] = @ColId
+
+						SET @SQL = @SQL + ' AS ' + @ColComputedDefintion
+					END
+
+				SET @FirstColumn = ',';
+		
+				DELETE FROM #TTColumnData WHERE ColName = @ColumnName;
+			END
+
+			INSERT INTO @Scripts	
+			(
+				ScriptType,
+				TableName, 
+				SqlStatement,
+				SchemaName
+			)
+			VALUES
+			(
+				'UDTT',  
+				@UdttName, 
+				'CREATE TYPE ' + @SchemaName + '.' + @UdttName + ' AS TABLE (' + @SQL + ')',
+				@SchemaName
+			)
+			
+			DELETE FROM #TableTypes WHERE [name] = @UdttName
+	END
+
+	
 	--Functions
 	INSERT INTO @Scripts	
 	(
@@ -356,6 +566,7 @@ END
 	 from sys.sql_modules m
 	inner join sys.objects o on m.object_id  = o.object_id
 	WHERE o.[Type] in ('FN', 'IF', 'TF')
+	ORDER BY create_date asc
 
 	--Grab Procedures
 	INSERT INTO @Scripts	
@@ -369,7 +580,9 @@ END
 		m.definition
 	from sys.procedures p
 	inner join sys.sql_modules m on p.object_id = m.object_id
+	ORDER BY create_date asc
 
+	--Grab the Views
 	INSERT INTO @Scripts	
 	(
 		ScriptType,
@@ -381,7 +594,8 @@ END
 		m.definition
 	from sys.views p
 	inner join sys.sql_modules m on p.object_id = m.object_id
+	ORDER BY create_date asc
 
-	SELECT *, LEN(SqlStatement) AS StatementLength FROM @Scripts;
-
-
+	SELECT *, LEN(SqlStatement) AS StatementLength 
+	FROM @Scripts
+	
