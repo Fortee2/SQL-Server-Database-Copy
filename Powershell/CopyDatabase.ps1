@@ -8,15 +8,23 @@ $fileName = "..\Schema.sql" #Path to the Schema.sql file included in this repo
 $tempPath = "..\BCP\" #A temp directory on a drive with enough free space to save the bcp files during the export and import operations
 $logPath = "C:\Script_Utility\log\"
 
-#Run the Schema.sql file againist the source database to get the metadata for the import
-$DS = Invoke-Sqlcmd -ServerInstance $ServerName -User $UserName -Password $Password -Database $SourceDatabase -InputFile $fileName -As DataSet
+#Get Schema Data from the database
+$DS = Invoke-Sqlcmd -MaxCharLength 150000  -ServerInstance $ServerName -User $UserName -Password $Password -Database $SourceDatabase -InputFile $fileName -As DataSet
 
 #For each row
 foreach($sql in $DS.Tables[0].Rows){
     Write-Output $sql.TableName
 
     #Execute file on each database
-    Invoke-Sqlcmd -ServerInstance $DestinationServer -Database $DestinationDB -MaxCharLength 8000 -Query $sql.SqlStatement 
+    Invoke-Sqlcmd -ServerInstance $DestinationServer -Database $DestinationDB -Query $sql.SqlStatement -OutputSqlErrors $true -verbose
+    
+    if ($error.count -gt 0)
+    {
+        $error | Out-File -FilePath "$($logPath)$($sql.TableName) _sqlout.txt"
+        $sql.SqlStatement | Out-File -FilePath "$($logPath)$($sql.TableName) _sqlout.txt"
+        
+        $error.Clear()
+    }
     Write-Output $sql.SqlStatement    
 
     #If we just created the table, let's import the data before applying an constraints or indexes
@@ -32,7 +40,7 @@ foreach($sql in $DS.Tables[0].Rows){
         Write-Output $bcp
 
         #add code to import in to use format file
-        $bcp = "bcp $($sql.SchemaName).$($sql.TableName) in $($tempPath)$($sql.TableName).bcp -S $($DestinationServer) -d $($DestinationDB) -T -t -E -f $($tempPath)$($sql.TableName).fmt -e $($logPath)$($sql.TableName)_in_err.txt"
+        $bcp = "bcp $($sql.SchemaName).$($sql.TableName) in $($tempPath)$($sql.TableName).bcp -b 100 -S $($DestinationServer) -d $($DestinationDB) -T -t -E -f $($tempPath)$($sql.TableName).fmt -e $($logPath)$($sql.TableName)_in_err.txt"
         Invoke-Expression $bcp
         Write-Output $bcp
 
