@@ -12,3 +12,10 @@ There are two files that make up this project.
 The first is [Schema.sql](https://github.com/Fortee2/SQL-Serer-Database-Copy/tree/master/ExtractDB/Schema.sql) in the ExtractDB folder.  This script extracts the schema information from your source database using the SQL Server system table and generates the necessary create statements.  
 
 The second file is a Powershell script, [CopyDatabase.ps1](https://github.com/Fortee2/SQL-Serer-Database-Copy/tree/master/Powershell/CopyDatabase.ps1), that executes Schema.sql against the source database and take the output and applies it to a destination database.   The CopyDatabase script also includes calls to the Bulk Copy tool, BCP, to transfer data after the table structure has been created.
+
+## Version 2019.08.10
+* Fixed - Adds brackets around column names when generating table create statements.
+* Adds Foreign Key Constraints.
+* Adds support User Defined Table Types.
+* Orders Functions, Procedures, and Views by create date to attempt to create parent objects before dependent objects.
+* Increased max characters in powershell script to 150,000 characters to accommodate large scripts.
