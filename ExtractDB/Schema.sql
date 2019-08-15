@@ -228,7 +228,8 @@ BEGIN
 
 			'Alter',
 			@TableName,
-			'DROP TABLE ' + QuoteName( @SchemaName ) + '.' + QUOTENAME( @TableName )
+			'IF object_id(''' + quotename(@SchemaName) + '.' + quotename(@TableName) + ''') IS NOT NULL  
+				DROP TABLE ' + quotename(@SchemaName) + '.' + quotename(@TableName),
 		)
 
 	INSERT INTO @Scripts
