@@ -144,7 +144,7 @@ BEGIN
 		FROM #ColumnData
 		Order by column_id
 
-		SET @SQL = @SQL + @FirstColumn + ' [' + @ColumnName + '] '
+		SET @SQL = @SQL + @FirstColumn + ' ' + QUOTENAME( @ColumnName) + ' '
 
 		if @ColIsComputed = 0
 		BEGIN
@@ -201,7 +201,7 @@ BEGIN
 	END
 
 	SET @SQL = @SQL +
-	ISNULL((SELECT CHAR(9) + ', CONSTRAINT [' + k.name + '] PRIMARY KEY (' +
+	ISNULL((SELECT CHAR(9) + ', CONSTRAINT ' + QUOTENAME( k.name) + ' PRIMARY KEY (' +
 		(SELECT STUFF((
 			SELECT ', [' + c.name + '] ' + CASE WHEN ic.is_descending_key = 1 THEN 'DESC' ELSE 'ASC' END
 			FROM sys.index_columns ic WITH (NOWAIT)
@@ -215,7 +215,7 @@ BEGIN
 		WHERE k.parent_object_id = @TableObjectId
 		AND k.[type] = 'PK'), '') + ')'  + CHAR(13)
 
-	SET @SQL = 'CREATE TABLE ' + @SchemaName + '.' + @TableName + ' (' + @SQL ;
+	SET @SQL = 'CREATE TABLE ' + QUOTENAME( @SchemaName) + '.' + QUOTENAME( @TableName) + ' (' + @SQL ;
 
 	IF @DropAndRecreate = 1
 		INSERT INTO @Scripts
@@ -228,7 +228,8 @@ BEGIN
 
 			'Alter',
 			@TableName,
-			'DROP TABLE ' + @SchemaName + '.' + @TableName
+			'IF object_id(''' + quotename(@SchemaName) + '.' + quotename(@TableName) + ''') IS NOT NULL  
+				DROP TABLE ' + quotename(@SchemaName) + '.' + quotename(@TableName)
 		)
 
 	INSERT INTO @Scripts
@@ -282,7 +283,7 @@ BEGIN
 			ELSE ''
 			END AS [IndexType]
 		,STUFF((
-				SELECT ', [' + sc.NAME + ']' AS "text()"
+				SELECT ', ' + quotename( sc.NAME )  AS "text()"
 				FROM syscolumns AS sc
 				INNER JOIN sys.index_columns AS ic ON ic.object_id = sc.id
 					AND ic.column_id = sc.colid
@@ -330,7 +331,7 @@ BEGIN
 			@IndexIncludedColumns = IncludedColumns
 		FROM  @Indices
 
-		SET @SQL =  'CREATE ' + @IndexType + ' INDEX ' + @IndexName + ' ON ' + @SchemaName + '.' + @TableName + ' ( ' + @IndexedColumns + ') '
+		SET @SQL =  'CREATE ' + @IndexType + ' INDEX ' + QUOTENAME(@IndexName) + ' ON ' + QUOTENAME(@SchemaName) + '.' + QUOTENAME(@TableName) + ' ( ' + @IndexedColumns + ') '
 
 		if not @IndexIncludedColumns  is null
 		BEGIN
@@ -371,7 +372,7 @@ END
 		'ALTER TABLE '
 		   + QUOTENAME(cs.name) + '.' + QUOTENAME(ct.name)
 		   + ' ADD CONSTRAINT ' + QUOTENAME(fk.name)
-		   + ' FOREIGN KEY (' + STUFF((SELECT ',' + QUOTENAME(c.name)
+		   + ' FOREIGN KEY (' + STUFF((SELECT ', ' + QUOTENAME(c.name) + ' '
 		   -- get all the columns in the constraint table
 			FROM sys.columns AS c
 			INNER JOIN sys.foreign_key_columns AS fkc
