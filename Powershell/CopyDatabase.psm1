@@ -1,17 +1,40 @@
+<#
+ .Synopsis
+  Copies one SQL Server database to another.
+
+ .Description
+  Copies schema, structure (tables, views, etc.), to an empty SQL Server databaase.   Also supports copying data via bcp.
+
+.Parameter ServerName - Database to copy from 
+.Parameter DestinationServer - Database to copy to
+.Parameter SourceUser - Database User for the source database
+.Parameter SourcePassword - Password for the source database
+.Parameter DestinationUser  - Database User for the destination database
+.Parameter DestinationPassword - Password for the destination database
+.Parameter SourceDatabase  - name of the databse to copy too
+.Parameter DestinationDB - name of the destination database
+.Parameter CopyData = - flag to trigger bulk copy of data to destination database
+.Parameter fileName - Path to the Schema.sql file included in this repo ".\ExtractDB\Schema.sql"
+.Parameter tempPath - A temp directory on a drive with enough free space to save the bcp files during the export and import operations ".\BCP\"
+.Parameter logPath - directory to write error logs too ".\log\"
+
+
+#>
+
 function copy-database{
     param(
-        $ServerName = "Localhost\sqlexpress",  
-        $DestinationServer = "localhost\sqlexpress",
-        $SourceUser = "Database User",
-        $SourcePassword = "Database User's Password",
-        $DestinationUser = "Database User",
-        $DestinationPassword = "Database User's Password",
-        $SourceDatabase = "websearch", #name of the databse to copy too
-        $DestinationDB = "websearchSchema", #name of the destination database
-        $CopyData = $false, #flag to trigger bulk copy of data to destination database
-        $fileName = ".\ExtractDB\Schema.sql", #Path to the Schema.sql file included in this repo
-        $tempPath = ".\BCP\", #A temp directory on a drive with enough free space to save the bcp files during the export and import operations
-        $logPath = ".\log\" #directory to write error logs too
+        $ServerName,  
+        $DestinationServer,
+        $SourceUser,
+        $SourcePassword,
+        $DestinationUser,
+        $DestinationPassword,
+        $SourceDatabase, 
+        $DestinationDB ,
+        $CopyData,
+        $fileName,
+        $tempPath,
+        $logPath
     )
     #Get Schema Data from the database
     $DS = Invoke-Sqlcmd -MaxCharLength 150000  -ServerInstance $ServerName  -Database $SourceDatabase -InputFile $fileName -As DataSet
