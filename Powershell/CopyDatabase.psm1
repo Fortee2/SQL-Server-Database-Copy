@@ -5,18 +5,30 @@
  .Description
   Copies schema, structure (tables, views, etc.), to an empty SQL Server databaase.   Also supports copying data via bcp.
 
-.Parameter ServerName - Database to copy from 
-.Parameter DestinationServer - Database to copy to
-.Parameter SourceUser - Database User for the source database
-.Parameter SourcePassword - Password for the source database
-.Parameter DestinationUser  - Database User for the destination database
-.Parameter DestinationPassword - Password for the destination database
-.Parameter SourceDatabase  - name of the databse to copy too
-.Parameter DestinationDB - name of the destination database
-.Parameter CopyData = - flag to trigger bulk copy of data to destination database
-.Parameter fileName - Path to the Schema.sql file included in this repo ".\ExtractDB\Schema.sql"
-.Parameter tempPath - A temp directory on a drive with enough free space to save the bcp files during the export and import operations ".\BCP\"
-.Parameter logPath - directory to write error logs too ".\log\"
+.Parameter ServerName  
+Database to copy from 
+.Parameter DestinationServer  
+Database to copy to
+.Parameter SourceUser  
+Database User for the source database
+.Parameter SourcePassword - 
+Password for the source database
+.Parameter DestinationUser
+Database User for the destination database
+.Parameter DestinationPassword 
+Password for the destination database
+.Parameter SourceDatabase
+Name of the databse to copy too
+.Parameter DestinationDB 
+Name of the destination database
+.Parameter CopyData 
+Flag to trigger bulk copy of data to destination database
+.Parameter fileName 
+Path to the Schema.sql file included in this repo ".\ExtractDB\Schema.sql"
+.Parameter tempPath 
+A temp directory on a drive with enough free space to save the bcp files during the export and import operations ".\BCP\"
+.Parameter logPath 
+Directory to write error logs too ".\log\"
 
 
 #>
@@ -32,7 +44,7 @@ function copy-database{
         $SourceDatabase, 
         $DestinationDB ,
         $CopyData,
-        $fileName,
+        $fileName = "..\ExtractDB\Schema.sql",
         $tempPath,
         $logPath
     )
