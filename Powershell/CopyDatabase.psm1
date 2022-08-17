@@ -110,8 +110,8 @@ function copy-data{
         [string] $WorkingFolder,
         [string] $SourceUser,
         [string] $DestinationUser,
-        [string] $SourcePassword,
-        [string] $DestinationPassword
+        [SecuretSring] $SourcePassword,
+        [SecuretSring] $DestinationPassword
     )
 
     $sourceAuth = " -T "
